@@ -198,11 +198,12 @@ func listRoutes() ([]Route, error) {
 		return res, nil
 	default:
 		var res []Route
-		out, err4 := runCommand("ip", "route", "show")
+		out, err4 := runCommand("ip", "route", "show", "table", "all")
 		if err4 == nil {
 			res = append(res, parseIPRoutes(out, "ipv4")...)
 		}
-		out6, err6 := runCommand("ip", "-6", "route", "show")
+		// out6, err6 := runCommand("ip", "-6", "route", "show")
+		out6, err6 := runCommand("ip", "-6", "route", "show", "table", "all")
 		if err6 == nil {
 			res = append(res, parseIPRoutes(out6, "ipv6")...)
 		}
