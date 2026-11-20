@@ -39,19 +39,19 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          OUTPUT_NAME="pipeplane-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_NAME="mwg-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             OUTPUT_NAME="${OUTPUT_NAME}.exe"
           fi
           go build -o "${OUTPUT_NAME}" .
           # Упаковка в zip (сохраняется в текущей директории)
-          zip "pipeplane-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "${OUTPUT_NAME}"
+          zip "mwg-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "${OUTPUT_NAME}"
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
         # Срабатывает только при пуше тега
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: pipeplane-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+          files: mwg-${{ matrix.goos }}-${{ matrix.goarch }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
