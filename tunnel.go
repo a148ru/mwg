@@ -36,6 +36,12 @@ func tunnelUp(t *Tunnel, ts *ToolSet) error {
 }
 
 // tunnelDown останавливает туннель.
+//
+// На macOS wg-quick/awg-quick определяют интерфейс по имени файла конфига,
+// поэтому важно передать тот конфиг, с которым туннель был запущен. Сначала
+// пробуем копию в каталоге состояния, затем исходный конфиг пользователя
+// (туннель мог быть поднят вручную через `wg-quick up <исходный файл>`),
+// и только потом имя интерфейса.
 func tunnelDown(t *Tunnel, ts *ToolSet) error {
 	if ts.UpDown == "" {
 		return fmt.Errorf("не найдена утилита управления для %s", ts.Kind)
@@ -50,24 +56,34 @@ func tunnelDown(t *Tunnel, ts *ToolSet) error {
 		}
 		return nil
 	}
-	if _, err := os.Stat(t.ConfigPath); err == nil {
-		out, err := runCommand(ts.UpDown, "down", t.ConfigPath)
-		if err != nil {
-			if notInstalled(out) {
-				return nil
-			}
-			return err
+
+	var attempts []string
+	if t.ConfigPath != "" {
+		if _, err := os.Stat(t.ConfigPath); err == nil {
+			attempts = append(attempts, t.ConfigPath)
+		}
+	}
+	if t.SourcePath != "" && t.SourcePath != t.ConfigPath {
+		if _, err := os.Stat(t.SourcePath); err == nil {
+			attempts = append(attempts, t.SourcePath)
+		}
+	}
+	if t.Interface != "" {
+		attempts = append(attempts, t.Interface)
+	}
+	if len(attempts) == 0 {
+		return fmt.Errorf("не найден конфиг для остановки туннеля %s", t.Interface)
+	}
+
+	var lastErr error
+	for _, arg := range attempts {
+		if _, err := runCommand(ts.UpDown, "down", arg); err != nil {
+			lastErr = err
+			continue
 		}
 		return nil
 	}
-	out, err := runCommand(ts.UpDown, "down", t.Interface)
-	if err != nil {
-		if notInstalled(out) {
-			return nil
-		}
-		return err
-	}
-	return nil
+	return lastErr
 }
 
 func alreadyExists(out string) bool {
