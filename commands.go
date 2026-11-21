@@ -114,8 +114,8 @@ func addConfig(st *State, role Role, src string) error {
 	}
 
 	fmt.Printf("добавлен %s-конфиг: %s → %s (%s, интерфейс %s)\n", role, abs, dst, cfg.Kind, iface)
-	if _, up := liveInterfaces()[iface]; up {
-		fmt.Println("внимание: туннель уже запущен, примените изменения: mwg down && mwg up")
+	if real := resolveTunnelInterface(st.Tunnels[role], liveInterfaces()); real != "" {
+		fmt.Printf("внимание: туннель уже запущен (%s), примените изменения: mwg down && mwg up\n", real)
 	}
 	return nil
 }
@@ -179,13 +179,13 @@ func cmdUp(args []string) int {
 	}
 
 	live := liveInterfaces()
-	var expected []string
 	failed := false
 
 	// Порядок важен: сначала corp, затем internet (его default-маршрут главнее).
 	for _, t := range tunnels {
-		if _, up := live[t.Interface]; up {
-			fmt.Printf("%-8s %-8s уже запущен\n", t.Interface, t.Role)
+		if real := resolveTunnelInterface(t, live); real != "" {
+			fmt.Printf("%-8s %-8s уже запущен (%s)\n", t.Interface, t.Role, real)
+			t.RealInterface = real
 			continue
 		}
 		ts := detectTools(t.Kind)
@@ -195,18 +195,31 @@ func cmdUp(args []string) int {
 			failed = true
 			break
 		}
-		expected = append(expected, t.Interface)
 	}
 
-	live = waitForInterfaces(expected, 5*time.Second)
+	// На macOS реальное имя интерфейса — utunX, поэтому определяем его
+	// по /var/run/wireguard/<имя>.name, а не по имени конфига.
+	live = waitForTunnels(tunnels, 5*time.Second)
 	for _, t := range tunnels {
-		if _, up := live[t.Interface]; !up {
+		real := resolveTunnelInterface(t, live)
+		if real == "" {
 			fmt.Fprintf(os.Stderr, "ошибка: интерфейс %s не появился\n", t.Interface)
 			failed = true
+			continue
 		}
+		t.RealInterface = real
+	}
+	if err := st.save(); err != nil {
+		fmt.Fprintf(os.Stderr, "предупреждение: не удалось сохранить состояние: %v\n", err)
 	}
 
 	if !failed {
+		// На macOS wg-quick/awg-quick применяют DNS только от последнего
+		// поднятого туннеля, поэтому применяем DNS из обоих конфигов явно.
+		if err := applyDNS(st, tunnels); err != nil {
+			fmt.Fprintf(os.Stderr, "предупреждение: не удалось применить DNS: %v\n", err)
+		}
+
 		routes, err := tunnelRoutes(st)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "предупреждение: не удалось проверить маршруты: %v\n", err)
@@ -286,13 +299,13 @@ func findRole(tunnels []*Tunnel, role Role) *Tunnel {
 	return nil
 }
 
-func waitForInterfaces(expected []string, timeout time.Duration) map[string]Kind {
+func waitForTunnels(tunnels []*Tunnel, timeout time.Duration) map[string]Kind {
 	deadline := time.Now().Add(timeout)
 	for {
 		live := liveInterfaces()
 		all := true
-		for _, name := range expected {
-			if _, ok := live[name]; !ok {
+		for _, t := range tunnels {
+			if resolveTunnelInterface(t, live) == "" {
 				all = false
 				break
 			}
@@ -312,6 +325,11 @@ func cmdDown(args []string) int {
 	}
 	tunnels := st.ordered()
 	if len(tunnels) == 0 {
+		// Даже без сохранённых туннелей возвращаем DNS, если он остался
+		// от предыдущего запуска (например, после сбоя).
+		if err := restoreDNS(st); err != nil {
+			fmt.Fprintf(os.Stderr, "предупреждение: не удалось восстановить DNS: %v\n", err)
+		}
 		fmt.Fprintln(os.Stderr, "нет сохранённых конфигов")
 		return 1
 	}
@@ -320,7 +338,8 @@ func cmdDown(args []string) int {
 	// Обратный порядок: сначала internet, затем corp.
 	for i := len(tunnels) - 1; i >= 0; i-- {
 		t := tunnels[i]
-		if _, up := liveInterfaces()[t.Interface]; !up {
+		real := resolveTunnelInterface(t, liveInterfaces())
+		if real == "" {
 			fmt.Printf("%-8s %-8s не запущен\n", t.Interface, t.Role)
 			continue
 		}
@@ -330,13 +349,22 @@ func cmdDown(args []string) int {
 			failed = true
 			continue
 		}
-		fmt.Printf("%-8s %-8s остановка...\n", t.Interface, t.Role)
+		fmt.Printf("%-8s %-8s остановка (%s)...\n", t.Interface, t.Role, real)
 		if err := tunnelDown(t, ts); err != nil {
 			fmt.Fprintf(os.Stderr, "ошибка остановки %s: %v\n", t.Interface, err)
 			failed = true
 			continue
 		}
+		t.RealInterface = ""
 		fmt.Printf("%-8s остановлен\n", t.Interface)
+	}
+
+	// Возвращаем исходные настройки DNS macOS.
+	if err := restoreDNS(st); err != nil {
+		fmt.Fprintf(os.Stderr, "предупреждение: не удалось восстановить DNS: %v\n", err)
+	}
+	if err := st.save(); err != nil {
+		fmt.Fprintf(os.Stderr, "предупреждение: не удалось сохранить состояние: %v\n", err)
 	}
 	if failed {
 		return 1
@@ -377,10 +405,13 @@ func cmdShowTun() int {
 
 	for _, t := range st.ordered() {
 		state := "down"
-		if _, up := live[t.Interface]; up {
+		iface := t.Interface
+		if real := resolveTunnelInterface(t, live); real != "" {
 			state = "up"
+			iface = real
+			seen[real] = true
 		}
-		rows = append(rows, row{t.Role.String(), t.Interface, t.Kind.String(), state, t.ConfigPath})
+		rows = append(rows, row{t.Role.String(), iface, t.Kind.String(), state, t.ConfigPath})
 		seen[t.Interface] = true
 	}
 

@@ -21,6 +21,7 @@ type Route struct {
 var tunnelNameRe = regexp.MustCompile(`(?i)^(wg|awg|mwg)`)
 
 // looksLikeTunnel определяет, относится ли имя интерфейса к wg/awg.
+// На macOS туннели создаются с именами utunX, поэтому они тоже учитываются.
 func looksLikeTunnel(name string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
 	if n == "" {
@@ -29,7 +30,10 @@ func looksLikeTunnel(name string) bool {
 	if strings.Contains(n, "wireguard") || strings.Contains(n, "amnezia") {
 		return true
 	}
-	return tunnelNameRe.MatchString(n)
+	if tunnelNameRe.MatchString(n) {
+		return true
+	}
+	return runtime.GOOS == "darwin" && isUtunName(n)
 }
 
 // liveInterfaces возвращает запущенные wg/awg интерфейсы.
@@ -101,11 +105,27 @@ func linuxInterfaces() []string {
 }
 
 func darwinInterfaces() []string {
+	var names []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+
+	// Точный список utunX, которые принадлежат wireguard-go/AmneziaWG.
+	for _, name := range darwinWireGuardRuntimeInterfaces() {
+		add(name)
+	}
+
+	// Остальные явно именованные интерфейсы (если используются).
 	out, err := runCommand("ifconfig", "-a")
 	if err != nil {
-		return nil
+		return names
 	}
-	var names []string
 	for _, line := range strings.Split(out, "\n") {
 		if line == "" || line[0] == ' ' || line[0] == '\t' {
 			continue
@@ -115,8 +135,13 @@ func darwinInterfaces() []string {
 			continue
 		}
 		name := line[:i]
+		// Все системные utun перечислять нельзя: это не только VPN.
+		// Реальные туннельные utunX уже добавлены из /var/run/wireguard.
+		if isUtunName(name) {
+			continue
+		}
 		if looksLikeTunnel(name) {
-			names = append(names, name)
+			add(name)
 		}
 	}
 	return names

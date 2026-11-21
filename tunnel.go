@@ -8,8 +8,9 @@ import (
 )
 
 // tunnelUp поднимает туннель.
-//   Linux/macOS: wg-quick|awg-quick up <config>
-//   Windows:     wireguard.exe|amneziawg.exe /installtunnelservice <config>
+//
+//	Linux/macOS: wg-quick|awg-quick up <config>
+//	Windows:     wireguard.exe|amneziawg.exe /installtunnelservice <config>
 func tunnelUp(t *Tunnel, ts *ToolSet) error {
 	if ts.UpDown == "" {
 		return fmt.Errorf("не найдена утилита управления для %s", ts.Kind)

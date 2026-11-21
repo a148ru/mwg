@@ -28,19 +28,33 @@ func otherRole(r Role) Role {
 
 // Tunnel — сохранённый конфиг туннеля.
 type Tunnel struct {
-	Role       Role      `json:"role"`
-	Kind       Kind      `json:"kind"`
-	Interface  string    `json:"interface"`
-	ConfigPath string    `json:"config_path"` // копия конфига в каталоге состояния
-	SourcePath string    `json:"source_path"` // исходный путь, откуда добавлен конфиг
-	HasDefault bool      `json:"has_default_route"`
-	TableOff   bool      `json:"table_off"`
-	AddedAt    time.Time `json:"added_at"`
+	Role      Role   `json:"role"`
+	Kind      Kind   `json:"kind"`
+	Interface string `json:"interface"` // имя из имени конфига (mwgcorp/mwginet)
+	// RealInterface — фактическое имя интерфейса в системе. На macOS
+	// wg-quick/awg-quick создают utunX, поэтому имя из конфига не совпадает
+	// с реальным. Заполняется при успешном `up` и очищается при `down`.
+	RealInterface string    `json:"real_interface,omitempty"`
+	ConfigPath    string    `json:"config_path"` // копия конфига в каталоге состояния
+	SourcePath    string    `json:"source_path"` // исходный путь, откуда добавлен конфиг
+	HasDefault    bool      `json:"has_default_route"`
+	TableOff      bool      `json:"table_off"`
+	AddedAt       time.Time `json:"added_at"`
+}
+
+// dnsBackupEntry — исходные настройки DNS сетевой службы macOS,
+// которые восстанавливаются при `mwg down`.
+type dnsBackupEntry struct {
+	Service       string   `json:"service"`
+	Servers       []string `json:"servers,omitempty"`
+	SearchDomains []string `json:"search_domains,omitempty"`
 }
 
 // State — состояние приложения.
 type State struct {
 	Tunnels map[Role]*Tunnel `json:"tunnels"`
+	// DNSBackup хранится только на macOS и только пока туннели подняты.
+	DNSBackup []dnsBackupEntry `json:"dns_backup,omitempty"`
 }
 
 func newState() *State {

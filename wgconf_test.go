@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -148,6 +150,51 @@ func TestLooksLikeTunnel(t *testing.T) {
 		if looksLikeTunnel(n) {
 			t.Errorf("%q не должен распознаваться как туннель", n)
 		}
+	}
+}
+
+func TestLooksLikeTunnelUtunOnDarwin(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("utun-интерфейсы существуют только на macOS")
+	}
+	for _, n := range []string{"utun3", "utun10", "UTUN0"} {
+		if !looksLikeTunnel(n) {
+			t.Errorf("%q должен распознаваться как туннель на macOS", n)
+		}
+	}
+}
+
+func TestSplitDNS(t *testing.T) {
+	servers, search := splitDNS([]string{"10.10.0.1", "192.168.1.1", "corp.example.com", "10.10.0.1", "::1"})
+	wantServers := []string{"10.10.0.1", "192.168.1.1", "::1"}
+	wantSearch := []string{"corp.example.com"}
+	if !reflect.DeepEqual(servers, wantServers) {
+		t.Errorf("servers = %v, ожидалось %v", servers, wantServers)
+	}
+	if !reflect.DeepEqual(search, wantSearch) {
+		t.Errorf("search = %v, ожидалось %v", search, wantSearch)
+	}
+}
+
+func TestResolveTunnelInterface(t *testing.T) {
+	live := map[string]Kind{"mwgcorp": KindWG, "utun7": KindAWG}
+
+	// Linux/Windows: реальное имя совпадает с именем конфига.
+	t1 := &Tunnel{Interface: "mwgcorp"}
+	if got := resolveTunnelInterface(t1, live); got != "mwgcorp" {
+		t.Errorf("resolveTunnelInterface = %q, ожидалось mwgcorp", got)
+	}
+
+	// Сохранённое реальное имя (macOS после перезапуска приложения).
+	t2 := &Tunnel{Interface: "mwginet", RealInterface: "utun7"}
+	if got := resolveTunnelInterface(t2, live); got != "utun7" {
+		t.Errorf("resolveTunnelInterface = %q, ожидалось utun7", got)
+	}
+
+	// Туннель не поднят.
+	t3 := &Tunnel{Interface: "mwginet"}
+	if got := resolveTunnelInterface(t3, live); got != "" {
+		t.Errorf("resolveTunnelInterface = %q, ожидалось пустое значение", got)
 	}
 }
 
